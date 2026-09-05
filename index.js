@@ -1,296 +1,95 @@
-const http = require("http");
-const https = require("https");
-const { URL } = require("url");
+const express = require('express');
+const axios = require('axios');
+const login = require('fca-project-orai');
 
+const app = express();
 const PORT = process.env.PORT || 3000;
+const TARGET_URL = 'https://sinzu-a-1.onrender.com/';
 
-// 🎯 BOT NA I-UUPTIME
-const BOT_URL = "https://sinzu-a-1.onrender.com/";
+// ==========================================
+// 1. EXPRESS WEB SERVER & UPTIMER SYSTEM
+// ==========================================
 
-// ⏱️ EVERY 2 MINUTES
-const INTERVAL = 2 * 60 * 1000;
+app.get('/', (req, res) => {
+  res.send('Messenger Bot Status: ONLINE & ACTIVE');
+});
 
-let lastStatus = "Not checked yet";
-let lastCheck = null;
-let totalChecks = 0;
-let successfulChecks = 0;
-let failedChecks = 0;
+app.listen(PORT, () => {
+  console.log(`[SERVER] Web server listening on port ${PORT}`);
+});
 
-function pingBot() {
-    try {
-        const target = new URL(BOT_URL);
-        const client = target.protocol === "https:" ? https : http;
+// Self-ping kada 2 minuto (120,000 ms) para hindi matulog sa Render
+setInterval(async () => {
+  try {
+    await axios.get(TARGET_URL);
+    console.log(`[UPTIMER] Pinged ${TARGET_URL} successfully at ${new Date().toLocaleTimeString()}`);
+  } catch (error) {
+    console.error(`[UPTIMER ERROR]:`, error.message);
+  }
+}, 2 * 60 * 1000);
 
-        const request = client.get(target, {
-            timeout: 30000,
-            headers: {
-                "User-Agent": "Sinzu-Bot-Uptimer/1.0"
-            }
-        }, (response) => {
-            response.resume();
 
-            totalChecks++;
-            lastCheck = new Date().toISOString();
+// ==========================================
+// 2. APPSTATE & SESSION PERSISTENCE HANDLING
+// ==========================================
 
-            if (response.statusCode >= 200 && response.statusCode < 500) {
-                successfulChecks++;
-                lastStatus = `ONLINE (${response.statusCode})`;
+let appState;
 
-                console.log(
-                    `[${new Date().toLocaleString()}] ✅ SINZU BOT ONLINE — HTTP ${response.statusCode}`
-                );
-            } else {
-                failedChecks++;
-                lastStatus = `ERROR (${response.statusCode})`;
-
-                console.log(
-                    `[${new Date().toLocaleString()}] ⚠️ SINZU BOT ERROR — HTTP ${response.statusCode}`
-                );
-            }
-        });
-
-        request.on("timeout", () => {
-            request.destroy(new Error("Request timeout"));
-        });
-
-        request.on("error", (error) => {
-            totalChecks++;
-            failedChecks++;
-            lastCheck = new Date().toISOString();
-            lastStatus = `OFFLINE (${error.message})`;
-
-            console.log(
-                `[${new Date().toLocaleString()}] ❌ PING FAILED — ${error.message}`
-            );
-        });
-
-    } catch (error) {
-        totalChecks++;
-        failedChecks++;
-        lastCheck = new Date().toISOString();
-        lastStatus = `ERROR (${error.message})`;
-
-        console.log(`❌ ERROR: ${error.message}`);
-    }
+// Unang hahanapin ang APPSTATE mula sa Render Environment Variables
+if (process.env.APPSTATE) {
+  try {
+    appState = JSON.parse(process.env.APPSTATE);
+    console.log('[AUTH] Loaded appstate from Environment Variables.');
+  } catch (err) {
+    console.error('[AUTH ERROR] Failed to parse APPSTATE environment variable:', err.message);
+  }
+} else {
+  // Kung wala sa environment variable, gagamitin ang local appstate.json file
+  try {
+    appState = require('./appstate.json');
+    console.log('[AUTH] Loaded appstate from local appstate.json file.');
+  } catch (err) {
+    console.error('[AUTH ERROR] Could not find local appstate.json file.');
+  }
 }
 
-// 🌐 STATUS WEB PAGE
-const server = http.createServer((req, res) => {
 
-    if (req.url === "/") {
-        res.writeHead(200, {
-            "Content-Type": "text/html; charset=utf-8"
-        });
+// ==========================================
+// 3. MESSENGER BOT INITIALIZATION
+// ==========================================
 
-        res.end(`
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+if (!appState) {
+  console.error('[FATAL ERROR] No valid appState found! Please set APPSTATE env variable or provide appstate.json');
+  process.exit(1);
+}
 
-    <title>Sinzu Bot Uptimer</title>
+const loginOptions = {
+  listenEvents: true,
+  selfListen: false
+};
 
-    <style>
-        * {
-            box-sizing: border-box;
-        }
+login({ appState }, loginOptions, (err, api) => {
+  if (err) {
+    console.error('[LOGIN ERROR] Failed to login to Facebook:', err);
+    return;
+  }
 
-        body {
-            margin: 0;
-            min-height: 100vh;
-            background: #0d1117;
-            color: white;
-            font-family: Arial, sans-serif;
+  console.log('[BOT] Facebook Messenger Bot successfully logged in!');
 
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .container {
-            width: 92%;
-            max-width: 600px;
-
-            background: #161b22;
-
-            border: 1px solid #30363d;
-            border-radius: 18px;
-
-            padding: 28px;
-
-            box-shadow: 0 10px 40px rgba(0,0,0,.35);
-        }
-
-        h1 {
-            margin: 0 0 8px;
-            font-size: 28px;
-        }
-
-        .subtitle {
-            color: #8b949e;
-            margin-bottom: 25px;
-        }
-
-        .status {
-            background: #21262d;
-            border-radius: 12px;
-            padding: 18px;
-            margin-bottom: 15px;
-        }
-
-        .online {
-            color: #3fb950;
-            font-weight: bold;
-        }
-
-        .offline {
-            color: #f85149;
-            font-weight: bold;
-        }
-
-        .row {
-            display: flex;
-            justify-content: space-between;
-            padding: 9px 0;
-            border-bottom: 1px solid #30363d;
-        }
-
-        .row:last-child {
-            border-bottom: none;
-        }
-
-        .label {
-            color: #8b949e;
-        }
-
-        .value {
-            text-align: right;
-            max-width: 65%;
-            word-break: break-all;
-        }
-
-        .footer {
-            margin-top: 20px;
-            color: #8b949e;
-            font-size: 13px;
-            text-align: center;
-        }
-    </style>
-</head>
-
-<body>
-
-<div class="container">
-
-    <h1>🤖 Sinzu Bot Uptimer</h1>
-
-    <div class="subtitle">
-        Automatic uptime monitoring
-    </div>
-
-    <div class="status">
-        <div class="${lastStatus.startsWith("ONLINE") ? "online" : "offline"}">
-            ● ${lastStatus}
-        </div>
-    </div>
-
-    <div class="row">
-        <span class="label">Target</span>
-        <span class="value">${BOT_URL}</span>
-    </div>
-
-    <div class="row">
-        <span class="label">Interval</span>
-        <span class="value">Every 2 minutes</span>
-    </div>
-
-    <div class="row">
-        <span class="label">Total Checks</span>
-        <span class="value">${totalChecks}</span>
-    </div>
-
-    <div class="row">
-        <span class="label">Successful</span>
-        <span class="value">${successfulChecks}</span>
-    </div>
-
-    <div class="row">
-        <span class="label">Failed</span>
-        <span class="value">${failedChecks}</span>
-    </div>
-
-    <div class="row">
-        <span class="label">Last Check</span>
-        <span class="value">${lastCheck || "Waiting..."}</span>
-    </div>
-
-    <div class="footer">
-        Sinzu Bot Uptimer • Running continuously
-    </div>
-
-</div>
-
-</body>
-</html>
-        `);
-
-    } else if (req.url === "/health") {
-
-        res.writeHead(200, {
-            "Content-Type": "application/json"
-        });
-
-        res.end(JSON.stringify({
-            status: "online",
-            target: BOT_URL,
-            interval: "2 minutes",
-            lastStatus,
-            lastCheck,
-            totalChecks,
-            successfulChecks,
-            failedChecks,
-            uptime: process.uptime()
-        }));
-
-    } else {
-
-        res.writeHead(404, {
-            "Content-Type": "text/plain"
-        });
-
-        res.end("Not Found");
+  // Listener sa mga pumasok na mensahe
+  api.listenMqtt((err, event) => {
+    if (err) {
+      console.error('[LISTEN ERROR]:', err);
+      return;
     }
+
+    // Halimbawang auto-response kapag may nag-message
+    if (event.type === 'message' && event.body) {
+      const messageText = event.body.toLowerCase();
+
+      if (messageText === 'ping') {
+        api.sendMessage('Pong! 🏓 Bot is active and running.', event.threadID, event.messageID);
+      }
+    }
+  });
 });
-
-server.listen(PORT, () => {
-
-    console.log("====================================");
-    console.log("🤖 SINZU BOT UPTIMER");
-    console.log("====================================");
-
-    console.log(`🌐 Uptimer Port: ${PORT}`);
-    console.log(`🎯 Target: ${BOT_URL}`);
-    console.log("⏱️ Ping: Every 2 minutes");
-
-    console.log("====================================");
-
-    // 🚀 FIRST PING IMMEDIATELY
-    pingBot();
-
-    // 🔄 THEN EVERY 2 MINUTES
-    setInterval(pingBot, INTERVAL);
-});
-
-Iyan na mismo ang target:
-
-https://sinzu-a-1.onrender.com/
-
-at 2 minutes ang pagitan ng bawat ping.
-
-Sa Render, sapat na ang:
-
-Build Command: npm install
-Start Command: node index.js
-
-Kailangan lang nasa repo mo ang "index.js" at "package.json".
